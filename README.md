@@ -22,3 +22,24 @@ Software:
 * Raspbian OS https://www.raspbian.com
 * pigpio library http://abyz.me.uk/pigpio/ or https://github.com/joan2937/pigpio
 
+Installation
+* Install raspbian OS
+* Install pigpio
+  * Need cmake
+    sudo apt install cmake
+  * From Github:
+```
+git clone https://github.com/joan2937/pigio
+cd pigpio
+mkdir build
+cd build
+cmake ../
+make -j4
+sudo make install
+sudo systemctl start pigpiod.service
+sudo systemctl enable pigpiod.service
+sudo systemctl status pigpiod.service
+cd ~
+````
+
+
