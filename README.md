@@ -8,7 +8,7 @@ Parts:
   * SD card 4 GB or larger
   * Power supply
 * Freenove Super Starter Kit for Raspberry Pi
-  * About $22 on amazon
+  * About $22 on Amazon
   * Includes breakout board
   * LED and resistor
   * LCD screen with I2C controller
@@ -41,5 +41,9 @@ sudo systemctl enable pigpiod.service
 sudo systemctl status pigpiod.service
 cd ~
 ````
+* Enable I2c control
+  * sudo raspi-config
+
+
 
 
