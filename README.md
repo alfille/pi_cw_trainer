@@ -41,6 +41,11 @@ sudo systemctl enable pigpiod.service
 sudo systemctl status pigpiod.service
 cd ~
 ````
+  * Python module
+  ```
+  pip3 install pigpio
+  ```
+  
 * Enable I2c control
   * sudo raspi-config
 
