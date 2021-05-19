@@ -10,6 +10,14 @@
 #
 # 2021 Paul H Alffille
 
+try:
+    import pigpio
+except:
+    print('pigpio module could not be loaded.\n Perhaps it needs to be installed by "pip3 install pigpio"\n')
+    raise
+    
+
+
 class code:
     # From https://morsecode.world/international/morse2.html
     cw = {
@@ -68,6 +76,16 @@ class code:
     'word' : 7 ,
     }
     
-    
-    
+class hardware:
+    LED = 5 # PIO 5, Pi header pin 29
+    def __init__( self ):
+        self.pi = pigpio.pi()
+        if not self.pi.connected():
+            print("Could not connect to pigpiod, was it started?\n")
+            exit()
+        self.led = self.pi.set_mode( type(self).LED, pigpio.OUTPUT )
+        
+    def pulse_led( self ):
+        self.led.write
+        
     
