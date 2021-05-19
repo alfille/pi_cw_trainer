@@ -15,6 +15,18 @@ try:
 except:
     print('pigpio module could not be loaded.\n Perhaps it needs to be installed by "pip3 install pigpio"\n')
     raise
+
+try:
+    import threading
+except:
+    print('threading module could not be loaded.\n')
+    raise
+    
+try:
+    import queue
+except:
+    print('queue module could not be loaded.\n')
+    raise
     
 
 
@@ -76,7 +88,15 @@ class code:
     'word' : 7 ,
     }
     
-class hardware:
+class communicate:
+    q = None
+    def __init__( self ):
+        if type(self).q is None:
+            self.q = queue.SimpleQueue()
+            type(self).q = self.q
+            
+
+class hardware(communicate):
     LED = 5 # PIO 5, Pi header pin 29
     def __init__( self ):
         self.pi = pigpio.pi()
@@ -88,4 +108,8 @@ class hardware:
     def pulse_led( self ):
         self.led.write
         
-    
+class LED(communicate):
+    def __init__( self, pin ):
+        self.pin = pin
+        self.led = self.pi.set_mode( pin, pigpio.OUTPUT )
+        
