@@ -10,26 +10,57 @@
 #
 # 2021 Paul H Alffille
 
-try:
-    import pigpio
-except:
-    print('pigpio module could not be loaded.\n Perhaps it needs to be installed by "pip3 install pigpio"\n')
-    raise
+configuration = {
+    'Graphics'  : True  ,
+    'Audio'     : False ,
+    'Keyboard'  : True  ,
+    'Buzzer'    : True  ,
+    'LEDflash'  : True  ,
+    'LEDscreen' : True  ,
+    'Knob'      : True  ,
+
+    }
+
+
+if configuration['Buzzer'] or configuration['LEDflash'] or configuration['LEDscreen'] or configuration['Knob']:
+    try:
+        import pigpio
+    except:
+        print('pigpio module could not be loaded.\n Perhaps it needs to be installed by "pip3 install pigpio"\n')
+        raise
+
+if configuration['Audio']:
+    try:
+        import pysinewave
+    except:
+        print('pysinewave module could not be loaded.\n Perhaps it needs to be installed by "pip3 install pysinewave"\n')
+        raise
+
+if configuration['Graphics']:
+    try:
+        import tkinter
+    except:
+        print('tkinter module could not be loaded.\n It should be part of the standard configuration\n')
+        raise
 
 try:
     import threading
 except:
-    print('threading module could not be loaded.\n')
+    print('threading module could not be loaded.\n It should be part of the standard configuration\n')
     raise
     
 try:
     import queue
 except:
-    print('queue module could not be loaded.\n')
+    print('queue module could not be loaded.\n It should be part of the standard configuration\n')
     raise
     
-
-
+try:
+    import time
+except:
+    print('time module could not be loaded.\n It should be part of the standard configuration\n')
+    raise
+    
 
 class communicate:
     q = None
@@ -60,7 +91,7 @@ class LED(communicate):
         self.led = self.pi.set_mode( pin, pigpio.OUTPUT )
 
     def put( self, x ):
-        for q in self.outputQs
+        for q in self.outputQs:
             q.put(x)
 
 class Queued:
@@ -136,7 +167,7 @@ class Ditter( Queued ):
                 self.put('LGAP')
 
 
-class Pulses( Queued ):
+class Pulses:
     """
     Change dits/dahs/gaps to timed events
     """
@@ -145,12 +176,20 @@ class Pulses( Queued ):
     DAH = 3
     GAP = 1
     LGAP = 3 - GAP
-    WGAP = 7 - GAP - WGAP
+    WGAP = 7 - GAP - LGAP
 
-    def __init__( self, WPM=5, *args ):
+    def __init__( self, Q, WPM=5  ):
+        global configuration
         self.wpm = WPM
-        super().__init__( *args )
-
+        self.Q = Q
+        self.clients = []
+        if configuration['Audio']:
+            self.clients.append( Audio() )
+        if configuration['Buzzer']:
+            self.clients.append( Buzzer() )
+        if configuration['LEDflash']:
+            self.clients.append( LEDflash() )
+        
     @property
     def wpm( self ):
         return self._wpm
@@ -163,16 +202,69 @@ class Pulses( Queued ):
     def _dittime( self ):
         return 60. / (50 * self._wpm)
         
+    def on( self ):
+        for c in self.clients:
+            c.on()
+
+    def off( self ):
+        for c in self.clients:
+            c.off()
+
     def start( self ):
         while True:
-            d = self.inputQ.get()
+            d = self.Q.get()
             if d == '.':
-                self.put((1,self._dt*type(self).DIT))
-                self.put((0,self._dt*type(self).GAP))
+                self.on()
+                time.sleep( self._dt * type(self).DIT )
+                self.off()
+                time.sleep( self._dt*type(self).GAP )
             elif d == '-':
-                self.put((1,self._dt*type(self).DAH))
-                self.put((0,self._dt*type(self).GAP))
+                self.on()
+                time.sleep( self._dt * type(self).DAH )
+                self.off()
+                time.sleep( self._dt*type(self).GAP )
             elif d == 'LGAP':
-                self.put((0,self._dt*type(self).LGAP))
+                time.sleep( self._dt*type(self).LGAP )
             elif d == 'WGAP':
-                self.put((0,self._dt*type(self).WGAP))
+                time.sleep( self._dt*type(self).WGAP )
+
+if configuration['Audio']:
+    class Audio(pysinewave.SineWave):
+        """
+        Computer audio beeps using pysinewave
+        Single instance
+        """
+        _instance = None
+
+        def __new__( cls ):
+            if cls._instance is None:
+                cls._instance = super().__new__(cls)
+            return cls._instance
+        
+        def __init__( self ):
+            self._pitch_ = 0
+            self.volume = 0
+            super().__init__( pitch = self._pitch_, decibels = self.volume )
+
+        def on( self ):
+            self.play()
+
+        def off( self ):
+            self.stop()
+
+        def louder( self ):
+            self.volume += 3
+            self.set_volume( self.volume )
+
+        def softer( self ):
+            self.volume -= 3
+            self.set_volume( self.volume )
+
+        def higher( self ):
+            self._pitch_ += 6
+            self.set_pitch( self._pitch_ )
+
+        def lower( self ):
+            self._pitch_ -= 6
+            self.set_pitch( self._pitch_ )
+            
