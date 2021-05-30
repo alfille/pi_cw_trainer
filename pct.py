@@ -18,7 +18,7 @@ configuration = {
     'LEDflash'  : True  ,
     'LEDscreen' : True  ,
     'Knob'      : True  ,
-
+    'Terminal'  : True  ,
     }
 
 
@@ -38,7 +38,7 @@ if configuration['Audio']:
 
 if configuration['Graphics']:
     try:
-        import tkinter
+        import tkinter as tk
     except:
         print('tkinter module could not be loaded.\n It should be part of the standard configuration\n')
         raise
@@ -61,19 +61,25 @@ except:
     print('time module could not be loaded.\n It should be part of the standard configuration\n')
     raise
     
-
-class communicate:
-    q = None
-    def __init__( self ):
-        if type(self).q is None:
-            self.q = queue.SimpleQueue()
-            type(self).q = self.q
-
-    @property
-    def Q( self ):
-        return self.q
-            
-class hardware(communicate):
+try:
+    import signal
+except:
+    print('signal module could not be loaded.\n It should be part of the standard configuration\n')
+    raise
+    
+try:
+    import sys
+except:
+    print('sys module could not be loaded.\n It should be part of the standard configuration\n')
+    raise
+    
+try:
+    import random
+except:
+    print('random module could not be loaded.\n It should be part of the standard configuration\n')
+    raise
+    
+class hardware:
     LED = 5 # PIO 5, Pi header pin 29
     def __init__( self ):
         self.pi = pigpio.pi()
@@ -81,60 +87,59 @@ class hardware(communicate):
             print("Could not connect to pigpiod, was it started?\n")
             exit()
         self.led = self.pi.set_mode( type(self).LED, pigpio.OUTPUT )
-        
-    def pulse_led( self ):
-        self.led.write
-        
-class LED(communicate):
-    def __init__( self, pin ):
-        self.pin = pin
-        self.led = self.pi.set_mode( pin, pigpio.OUTPUT )
-
-    def put( self, x ):
-        for q in self.outputQs:
-            q.put(x)
-
-class Queued:
+                
+class Source(threading.Thread):
     """
-    Class that handles input source and translates to
-    multiple output sources
-    with a trigger to indicate progress
+    Change dits/dahs/gaps to timed events
     """
-    def __init__( self, inputQ, outputQ2, triggerF ):
-        self.inputQ = inputQ
-        self.outputQs = outputQs
-        self.triggerF = triggerF
-        self.start()
+    def __init__( self ):
+        super().__init__()
+        global configuration
+        self.outQ = queue.Queue( maxsize=50 )
+        Pulses( self.outQ ).start()
+        self.source_function = self.random
+        self.choices = Pulses.Volcabulary() + list(' '*10)
 
-class Ditter( Queued ):
+    def random( self ):
+        return random.choice( self.choices )
+
+    def  run( self ):
+        while True:
+            self.outQ.put( self.source_function() )
+
+class Pulses(threading.Thread):
+    """
+    Change letters to dits/dahs/gaps as timed events and play
+    Send on to LettersOut after each is played
+    """
     # From https://morsecode.world/international/morse2.html
     cw = {
-    'a' : '.-'    ,
-    'b' : '-...'  ,
-    'c' : '-.-.'  ,
-    'd' : '-..'   ,
-    'e' : '.'     ,
-    'f' : '..-.'  ,
-    'g' : '--.'   ,
-    'h' : '....'  ,
-    'i' : '..'    ,
-    'j' : '.---'  ,
-    'k' : '-.-'   ,
-    'l' : '.-..'  ,
-    'm' : '--'    ,
-    'n' : '-.'    ,
-    'o' : '---'   ,
-    'p' : '.--.'  ,
-    'q' : '--.-'  ,
-    'r' : '.-.'   ,
-    's' : '...'   ,
-    't' : '-'     ,
-    'u' : '..-'   ,
-    'v' : '...-'  ,
-    'w' : '.--'   ,
-    'x' : '-..-'  ,
-    'y' : '-.--'  ,
-    'z' : '--..'  ,
+    'A' : '.-'    ,
+    'B' : '-...'  ,
+    'C' : '-.-.'  ,
+    'D' : '-..'   ,
+    'E' : '.'     ,
+    'F' : '..-.'  ,
+    'G' : '--.'   ,
+    'H' : '....'  ,
+    'I' : '..'    ,
+    'J' : '.---'  ,
+    'K' : '-.-'   ,
+    'L' : '.-..'  ,
+    'M' : '--'    ,
+    'N' : '-.'    ,
+    'O' : '---'   ,
+    'P' : '.--.'  ,
+    'Q' : '--.-'  ,
+    'R' : '.-.'   ,
+    'S' : '...'   ,
+    'T' : '-'     ,
+    'U' : '..-'   ,
+    'V' : '...-'  ,
+    'W' : '.--'   ,
+    'X' : '-..-'  ,
+    'Y' : '-.--'  ,
+    'Z' : '--..'  ,
     
     '0' : '-----' ,
     '1' : '.----' ,
@@ -154,31 +159,14 @@ class Ditter( Queued ):
     '=' : '-...-' ,
     '@' : '.--.-.',
     ':' : '---...',
+
+    '<bk>' : '-...-',
+    '<sk>' : '...-.-',
+    '<ar>' : '.-.-.',
     }
 
-    def start( self ):
-        while True:
-            letter = self.inputQ.get()
-            if letter == ' ':
-                self.put('WGAP' )
-            else:    
-                for d in type(self).cw[d]:
-                    self.put(d)
-                self.put('LGAP')
-
-
-class Pulses:
-    """
-    Change dits/dahs/gaps to timed events
-    """
-
-    DIT = 1
-    DAH = 3
-    GAP = 1
-    LGAP = 3 - GAP
-    WGAP = 7 - GAP - LGAP
-
     def __init__( self, Q, WPM=5  ):
+        super().__init__()
         global configuration
         self.wpm = WPM
         self.Q = Q
@@ -189,7 +177,16 @@ class Pulses:
             self.clients.append( Buzzer() )
         if configuration['LEDflash']:
             self.clients.append( LEDflash() )
+
+        self.outQ = queue.SimpleQueue()
+        LettersOut( self.outQ ).start()
+        self.cw = type(self).cw
         
+
+    @classmethod
+    def Volcabulary( cls ):
+        return list(cls.cw.keys())
+
     @property
     def wpm( self ):
         return self._wpm
@@ -197,7 +194,11 @@ class Pulses:
     @wpm.setter
     def wpm( self, Wpm ):
         self._wpm = Wpm
-        self.dt = self._dittime
+        self.DIT  = self._dittime()
+        self.DAH  = self.DIT * 3
+        self.GAP  = self.DIT * 1
+        self.LGAP = self.DIT * 3 - self.GAP
+        self.WGAP = self.DIT * 7 - self.LGAP - self.GAP
 
     def _dittime( self ):
         return 60. / (50 * self._wpm)
@@ -210,24 +211,67 @@ class Pulses:
         for c in self.clients:
             c.off()
 
-    def start( self ):
+    def run( self ):
         while True:
-            d = self.Q.get()
-            if d == '.':
-                self.on()
-                time.sleep( self._dt * type(self).DIT )
-                self.off()
-                time.sleep( self._dt*type(self).GAP )
-            elif d == '-':
-                self.on()
-                time.sleep( self._dt * type(self).DAH )
-                self.off()
-                time.sleep( self._dt*type(self).GAP )
-            elif d == 'LGAP':
-                time.sleep( self._dt*type(self).LGAP )
-            elif d == 'WGAP':
-                time.sleep( self._dt*type(self).WGAP )
+            letter = self.Q.get()
+            if letter not in self.cw:
+                continue
+            if letter == " ":
+                time.sleep( self.WGAP )
+                self.outQ.put(letter)
+                continue
+            for d in self.cw(letter):
+                if d == '.':
+                    self.on()
+                    time.sleep( self.DIT )
+                    self.off()
+                    time.sleep( self.GAP )
+                elif d == '-':
+                    self.on()
+                    time.sleep( self.DAH )
+                    self.off()
+                    time.sleep( self.GAP )
 
+            time.sleep( self.LGAP )
+            self.outQ.put(letter)
+
+class LettersOut(threading.Thread):
+    """
+    Change dits/dahs/gaps to timed events
+    """
+    def __init__( self, Q ):
+        super().__init__()
+        global configuration
+        self.Q = Q
+        self.clients = []
+        if configuration['Terminal']:
+            self.clients.append( Terminal )
+
+    def run( self ):
+        while True:
+            letter = self.Q.get()
+            for c in self.clients:
+                c.write(letter)
+
+if configuration['Terminal']:
+    class Terminal:
+        """
+        Letters out to terminal
+        Single instance
+        """
+        _instance = None
+
+        def __new__( cls ):
+            if cls._instance is None:
+                cls._instance = super().__new__(cls)
+            return cls._instance
+        
+        def __init__( self ):
+            print()
+
+        def write( self, letter ):
+            print( letter, end = '' )
+            
 if configuration['Audio']:
     class Audio(pysinewave.SineWave):
         """
@@ -267,4 +311,128 @@ if configuration['Audio']:
         def lower( self ):
             self._pitch_ -= 6
             self.set_pitch( self._pitch_ )
+
+if configuration['Buzzer']:
+    class Buzzer:
+        """
+        Computer audio beeps using pysinewave
+        Single instance
+        """
+        _instance = None
+
+        def __new__( cls ):
+            if cls._instance is None:
+                cls._instance = super().__new__(cls)
+            return cls._instance
+        
+        def __init__( self ):
+            self._pitch_ = 0
+            self.volume = 0
+
+        def on( self ):
+            self.play()
+
+        def off( self ):
+            self.stop()
+
+        def louder( self ):
+            self.volume += 3
+            self.set_volume( self.volume )
+
+        def softer( self ):
+            self.volume -= 3
+            self.set_volume( self.volume )
+
+        def higher( self ):
+            self._pitch_ += 6
+            self.set_pitch( self._pitch_ )
+
+        def lower( self ):
+            self._pitch_ -= 6
+            self.set_pitch( self._pitch_ )
+
+if configuration['Graphics']:
+    class Graphics():
+        """
+        Computer audio beeps using pysinewave
+        Single instance
+        """
+        _instance = None
+
+        def __new__( cls ):
+            if cls._instance is None:
+                cls._instance = super().__new__(cls)                
+            return cls._instance
+        
+        def __init__( self ):
+            # set root window
+            self.root = tk.Tk()
+            # Set geometry
+            self.root.geometry("400x400")
+            self.flash = tk.Frame( self.root, width=50, height=50, bg="Gray" )
+            self.flash.grid()
+
+        @property
+        def Root( self ):
+            return self.root
+
+        def on( self ):
+            self.play()
+
+        def off( self ):
+            self.stop()
+
+        def louder( self ):
+            self.volume += 3
+            self.set_volume( self.volume )
+
+        def softer( self ):
+            self.volume -= 3
+            self.set_volume( self.volume )
+
+        def higher( self ):
+            self._pitch_ += 6
+            self.set_pitch( self._pitch_ )
+
+        def lower( self ):
+            self._pitch_ -= 6
+            self.set_pitch( self._pitch_ )
+
+def BCM():
+    infofile = "/proc/cpuinfo"
+    try:
+        with open(infofile) as f:
+            lines = f.readlines()
+            for l in lines:
+                s = re,search(r'BCM\d\d\d\d',l)
+                if s is not None:
+                    return s.group()
+            return None
+    except:
+        print( "Could not open <{}> for hardware information".format(infofile) )
+        return None
             
+def signal_handler(signal, frame):
+    sys.exit(0)
+
+def main(args):
+    global configuration
+    
+    # keyboard interrupt
+    signal.signal(signal.SIGINT, signal_handler)
+
+    if configuration['Graphics']:
+        Graphics()
+
+    Source().start()
+
+    if configuration['Graphics']:
+        Graphics().Root.mainloop()
+    
+    
+
+    # load library
+
+if __name__ == "__main__":
+    # execute only if run as a script
+    sys.exit(main(sys.argv))
