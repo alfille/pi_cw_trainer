@@ -143,7 +143,6 @@ class Source(threading.Thread):
     Change dits/dahs/gaps to timed events
     """
     def __init__( self, Q ):
-        print("Source")
         super().__init__()
         global configuration
         self.outQ = Q
@@ -154,8 +153,9 @@ class Source(threading.Thread):
         return random.choice( self.choices )
 
     def  run( self ):
-        print("Source run")
-        while True:
+        # called in a separate thred by "start()"
+        global running
+        while running:
             self.outQ.put( self.source_function() )
 
 class Pulses(threading.Thread):
@@ -217,7 +217,6 @@ class Pulses(threading.Thread):
     }
 
     def __init__( self, inQ, outQ, WPM=5  ):
-        print("Pulses")
         super().__init__()
         global gAudio, gBuzzer, gLEDflash, gGraphics
         self.wpm = WPM
@@ -259,8 +258,9 @@ class Pulses(threading.Thread):
                 c.off()
 
     def run( self ):
-        print("Pulses run")
-        while True:
+        # called in a separate thred by "start()"
+        global running
+        while running:
             letter = self.inQ.get()
             if letter not in self.cw:
                 continue
@@ -282,24 +282,27 @@ class Pulses(threading.Thread):
 
             time.sleep( self.LGAP )
             self.outQ.put(letter)
+            self.inQ.task_done()
 
 class LettersOut(threading.Thread):
     """
     Change dits/dahs/gaps to timed events
     """
     def __init__( self, Q ):
-        print(self.__name__)
         super().__init__()
-        global configuration
+        global configuration, gTerminal, gGraphics
         self.Q = Q
-        self.clients = [ gTerminal ]
+        self.clients = [ gTerminal, gGraphics ]
 
     def run( self ):
-        while True:
+        # called in a separate thred by "start()"
+        global running
+        while running:
             letter = self.Q.get()
             for c in self.clients:
                 if c is not None:
                     c.write(letter)
+            self.Q.task_done()
 
 gTerminal = None
 if configuration['Terminal']:
@@ -415,9 +418,14 @@ if configuration['Graphics']:
             self.root = tk.Tk()
             # Set geometry
             self.root.geometry("400x400")
+
             self.flash = tk.Frame( self.root, width=50, height=50 )
             self.off()
-            self.flash.grid()
+            self.flash.pack()
+
+            self.text = tk.Text( self.root)
+            self.text.config( font=("Courier",20) )
+            self.text.pack()
 
         def Mainloop( self ):
             return self.root.mainloop()
@@ -450,11 +458,16 @@ if configuration['Graphics']:
             self._pitch_ -= 6
             self.set_pitch( self._pitch_ )
 
+        def write( self, letter ):
+            self.text.insert( tk.END, letter )
+
 def signal_handler(signal, frame):
+    global running
+    running = False
     sys.exit(0)
 
 def main(args):
-    global configuration, gHardware, gAudio, gGraphics
+    global configuration, gHardware, gAudio, gGraphics, gTerminal, running
     
     # keyboard interrupt
     signal.signal(signal.SIGINT, signal_handler)
@@ -480,14 +493,17 @@ def main(args):
         gTerminal = None
 
     sourceQ = queue.Queue( maxsize=50 )
-    resultQ = queue.SimpleQueue()
+    resultQ = queue.Queue( maxsize=0 )
 
-    Source(sourceQ).run()
-    Pulses(sourceQ,resultQ).run()
-    LettersOut(resultQ).run()
+    running = True
+
+    LettersOut(resultQ).start()
+    Pulses(sourceQ,resultQ).start()
+    Source(sourceQ).start()
 
     if gGraphics is not None:
         gGraphics.Mainloop()
+    running = False
     
 if __name__ == "__main__":
     # execute only if run as a script
