@@ -10,6 +10,9 @@
 #
 # 2021 Paul H Alffille
 
+# Note: tkinter only likes being the primary thread, so will just use it for control
+# alternatively could poll repidly.
+
 configuration = {
     'Graphics'  : True  ,
     'Audio'     : False ,
@@ -85,11 +88,11 @@ except:
     print('re module (regular expression search) could not be loaded.\n It should be part of the standard configuration\n')
     raise
     
+gHardware = None
 if configuration['Buzzer'] or configuration['Knob'] or configuration['LEDscreen'] or configuration['LEDflash']:
     class Hardware:
         """
         Hardware connection -- i.e. Raspberry Pi GPIO pins
-        Singleton class
         """
 
         # Hardware PWM (for buzzer)
@@ -118,58 +121,32 @@ if configuration['Buzzer'] or configuration['Knob'] or configuration['LEDscreen'
         PWM = 32
         I2Cbus = 1
         
-        _instance = None
-
-        def __new__( cls ):
-            if cls._instance is None:
-                cls._instance = super().__new__(cls)
-            return cls._instance
-            
         def __init__( self ):
+            global configuration, gLEDflash, gBuzzer
             self.pi = pigpio.pi()
             if not self.pi.connected:
                 print("Could not connect to pigpiod, was it started?\n")
                 exit()
-            self.led = self.pi.set_mode( type(self).LED, pigpio.OUTPUT )
-            self.BCM = self.board() # Type of Pi
+            
+            try:
+                gLEDflash = LEDflash( self.pi, type(self).LED )
+            except:
+                gLEDflash = None
 
-        @property
-        def handle( self ):
-            return self.pi
-
-        @property
-        def LEDpin( self ):
-            return type(self).LED
-
-        @property
-        def PWMpin( self ):
-            return type(self).PWM
-
-        '''
-        def board( self ):
-        infofile = "/proc/cpuinfo"
-        try:
-            with open(infofile) as f:
-                lines = f.readlines()
-                for l in lines:
-                    s = re,search(r'BCM\d\d\d\d',l)
-                    if s is not None:
-                        return s.group()
-                return None
-        except:
-            print( "Could not open <{}> for hardware information".format(infofile) )
-            return None
-        '''
+            try:
+                gBuzzer = Buzzer( self.pi, type(self).PWM )
+            except:
+                gBuzzer = None
                             
 class Source(threading.Thread):
     """
     Change dits/dahs/gaps to timed events
     """
-    def __init__( self ):
+    def __init__( self, Q ):
+        print("Source")
         super().__init__()
         global configuration
-        self.outQ = queue.Queue( maxsize=50 )
-        Pulses( self.outQ ).start()
+        self.outQ = Q
         self.source_function = self.random
         self.choices = Pulses.Volcabulary() + list(' '*10)
 
@@ -177,6 +154,7 @@ class Source(threading.Thread):
         return random.choice( self.choices )
 
     def  run( self ):
+        print("Source run")
         while True:
             self.outQ.put( self.source_function() )
 
@@ -238,23 +216,15 @@ class Pulses(threading.Thread):
     '<ar>' : '.-.-.',
     }
 
-    def __init__( self, Q, WPM=5  ):
+    def __init__( self, inQ, outQ, WPM=5  ):
+        print("Pulses")
         super().__init__()
-        global configuration
+        global gAudio, gBuzzer, gLEDflash, gGraphics
         self.wpm = WPM
-        self.Q = Q
-        self.clients = []
-        if configuration['Audio']:
-            self.clients.append( Audio() )
-        if configuration['Buzzer']:
-            self.clients.append( Buzzer() )
-        if configuration['LEDflash']:
-            self.clients.append( LEDflash() )
-        if configuration['Graphics']:
-            self.clients.append( Graphics() )
+        self.inQ = inQ
+        self.outQ = outQ
+        self.clients = [ gAudio, gBuzzer, gLEDflash, gGraphics ]
 
-        self.outQ = queue.SimpleQueue()
-        LettersOut( self.outQ ).start()
         self.cw = type(self).cw
         
 
@@ -280,15 +250,18 @@ class Pulses(threading.Thread):
         
     def on( self ):
         for c in self.clients:
-            c.on()
+            if c is not None:
+                c.on()
 
     def off( self ):
         for c in self.clients:
-            c.off()
+            if c is not None:
+                c.off()
 
     def run( self ):
+        print("Pulses run")
         while True:
-            letter = self.Q.get()
+            letter = self.inQ.get()
             if letter not in self.cw:
                 continue
             if letter == " ":
@@ -315,51 +288,37 @@ class LettersOut(threading.Thread):
     Change dits/dahs/gaps to timed events
     """
     def __init__( self, Q ):
+        print(self.__name__)
         super().__init__()
         global configuration
         self.Q = Q
-        self.clients = []
-        if configuration['Terminal']:
-            self.clients.append( Terminal() )
+        self.clients = [ gTerminal ]
 
     def run( self ):
         while True:
             letter = self.Q.get()
             for c in self.clients:
-                c.write(letter)
+                if c is not None:
+                    c.write(letter)
 
+gTerminal = None
 if configuration['Terminal']:
     class Terminal:
         """
         Letters out to terminal
-        Single instance
         """
-        _instance = None
-
-        def __new__( cls ):
-            if cls._instance is None:
-                cls._instance = super().__new__(cls)
-            return cls._instance
-        
         def __init__( self ):
             print()
 
         def write( self, letter ):
             print( letter, end = '' )
             
+gAudio = None
 if configuration['Audio']:
     class Audio(pysinewave.SineWave):
         """
         Computer audio beeps using pysinewave
-        Single instance
         """
-        _instance = None
-
-        def __new__( cls ):
-            if cls._instance is None:
-                cls._instance = super().__new__(cls)
-            return cls._instance
-        
         def __init__( self ):
             self._pitch_ = 0
             self.volume = 0
@@ -387,26 +346,18 @@ if configuration['Audio']:
             self._pitch_ -= 6
             self.set_pitch( self._pitch_ )
 
+gBuzzer = None
 if configuration['Buzzer']:
     class Buzzer:
         """
         Piezo beep using PWM pin amplified with transistor
-        Single instance
         """
-        _instance = None
-
-        def __new__( cls ):
-            if cls._instance is None:
-                cls._instance = super().__new__(cls)
-            return cls._instance
-        
-        def __init__( self ):
+        def __init__( self, handle, pin ):
             self._pitch_ = 0
             self.calc()
             self.volume = 0
-            hardware = Hardware()
-            self.pin = hardware.PWMpin
-            self.handle = hardware.handle
+            self.pin = pin
+            self.handle = handle
 
         def on( self ):
             self.handle.hardware_PWM( self.pin , self.freq , 500000 )
@@ -432,23 +383,16 @@ if configuration['Buzzer']:
 
         def calc( self ):
             self.freq = 256. * pow(2,self._pitch_/12.)
+
+gLEDflash = None
 if configuration['LEDflash']:
     class LEDflash:
         """
         Flash singleLED connected to a gpio pin (with 10K resistor)
-        Single instance
         """
-        _instance = None
-
-        def __new__( cls ):
-            if cls._instance is None:
-                cls._instance = super().__new__(cls)
-            return cls._instance
-        
-        def __init__( self ):
-            hardware = Hardware()
-            self.pin = hardware.LEDpin
-            self.handle = hardware.handle
+        def __init__( self, handle, pin ):
+            self.pin = pin
+            self.handle = handle
             self.handle.set_mode( self.pin, pigpio.OUTPUT )
 
         def on( self ):
@@ -457,42 +401,37 @@ if configuration['LEDflash']:
         def off( self ):
             self.handle.write( self.pin , 0 )
 
+gGraphics = None
 if configuration['Graphics']:
     class Graphics():
         """
         Computer audio beeps using pysinewave
         Single instance
         """
-        _instance = None
         root = None
 
-        def __new__( cls ):
-            if cls._instance is None:
-                cls._instance = super().__new__(cls)                
-            return cls._instance
-        
         def __init__( self ):
-            print("GGGGRAPHICS\n",self)
-            if type(self).root is None:
-                # set root window
-                self.root = tk.Tk()
-                # Set geometry
-                self.root.geometry("400x400")
-                self.flash = tk.Frame( self.root, width=50, height=50 )
-                self.off()
-                self.flash.grid()
+            # set root window
+            self.root = tk.Tk()
+            # Set geometry
+            self.root.geometry("400x400")
+            self.flash = tk.Frame( self.root, width=50, height=50 )
+            self.off()
+            self.flash.grid()
 
-                type(self).root = self.root
-            print(self.root)
-
-        @property
-        def Root( self ):
-            return self.root
+        def Mainloop( self ):
+            return self.root.mainloop()
 
         def on( self ):
-            self.flash['background']='red'
+            self.root.after_idle( self._on)
 
         def off( self ):
+            self.root.after_idle( self._off)
+
+        def _on( self ):
+            self.flash['background']='red'
+
+        def _off( self ):
             self.flash['background']='grey'
 
         def louder( self ):
@@ -515,23 +454,41 @@ def signal_handler(signal, frame):
     sys.exit(0)
 
 def main(args):
-    global configuration
+    global configuration, gHardware, gAudio, gGraphics
     
     # keyboard interrupt
     signal.signal(signal.SIGINT, signal_handler)
 
-    if configuration['Graphics']:
-        Graphics()
+    try:
+        gHardware = Hardware()
+    except:
+        gHardware = None
 
-    Source().start()
+    try:
+        gAudio = Audio()
+    except:
+        gAudio = None
 
-    if configuration['Graphics']:
-        Graphics().Root.mainloop()
+    try:
+        gGraphics = Graphics()
+    except:
+        gGraphics = None
+
+    try:
+        gTerminal = Terminal()
+    except:
+        gTerminal = None
+
+    sourceQ = queue.Queue( maxsize=50 )
+    resultQ = queue.SimpleQueue()
+
+    Source(sourceQ).run()
+    Pulses(sourceQ,resultQ).run()
+    LettersOut(resultQ).run()
+
+    if gGraphics is not None:
+        gGraphics.Mainloop()
     
-    
-
-    # load library
-
 if __name__ == "__main__":
     # execute only if run as a script
     sys.exit(main(sys.argv))
