@@ -15,7 +15,7 @@
 
 configuration = {
     'Graphics'  : True  ,
-    'Audio'     : False ,
+    'Audio'     : True  ,
     'Keyboard'  : True  ,
     'Buzzer'    : False ,
     'LEDflash'  : False ,

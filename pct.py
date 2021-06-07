@@ -15,8 +15,8 @@
 
 configuration = {
     'Graphics'  : True  ,
-    'Audio'     : False ,
     'Keyboard'  : True  ,
+    'Audio'     : True  ,
     'Buzzer'    : False ,
     'LEDflash'  : False ,
     'LEDscreen' : False ,
@@ -34,9 +34,14 @@ if configuration['Buzzer'] or configuration['LEDflash'] or configuration['LEDscr
 
 if configuration['Audio']:
     try:
-        import pysinewave
+        import numpy as np
     except:
-        print('pysinewave module could not be loaded.\n Perhaps it needs to be installed by "pip3 install pysinewave"\n')
+        print('Numpy module could not be loaded.\n Perhaps it needs to be installed by "pip3 install numpy"\n')
+        raise
+    try:
+        import pyaudio
+    except:
+        print('pyaudio module could not be loaded.\n Perhaps it needs to be installed by "pip3 install pyaudio"\n')
         raise
 
 if configuration['Graphics']:
@@ -82,20 +87,14 @@ except:
     print('random module could not be loaded.\n It should be part of the standard configuration\n')
     raise
     
-try:
-    import re
-except:
-    print('re module (regular expression search) could not be loaded.\n It should be part of the standard configuration\n')
-    raise
-    
-gHardware = None
+gPiHardware = None
 if configuration['Buzzer'] or configuration['Knob'] or configuration['LEDscreen'] or configuration['LEDflash']:
-    class Hardware:
+    class PiHardware:
         """
-        Hardware connection -- i.e. Raspberry Pi GPIO pins
+        PiHardware connection -- i.e. Raspberry Pi GPIO pins
         """
 
-        # Hardware PWM (for buzzer)
+        # PiHardware PWM (for buzzer)
         # GPIO Header
         #  g12    p32
         #  g13    p33
@@ -222,7 +221,7 @@ class Pulses(threading.Thread):
         self.wpm = WPM
         self.inQ = inQ
         self.outQ = outQ
-        self.clients = [ gAudio, gBuzzer, gLEDflash, gGraphics ]
+        self.clients = [ gBuzzer, gLEDflash, gGraphics ]
 
         self.cw = type(self).cw
         
@@ -237,12 +236,15 @@ class Pulses(threading.Thread):
 
     @wpm.setter
     def wpm( self, Wpm ):
+        global gAudio
         self._wpm = Wpm
         self.DIT  = self._dittime()
         self.DAH  = self.DIT * 3
         self.GAP  = self.DIT * 1
         self.LGAP = self.DIT * 3 - self.GAP
         self.WGAP = self.DIT * 7 - self.LGAP - self.GAP
+        if gAudio:
+            gAudio.settimes( self.DIT, self.DAH )
 
     def _dittime( self ):
         return 60. / (50 * self._wpm)
@@ -259,7 +261,7 @@ class Pulses(threading.Thread):
 
     def run( self ):
         # called in a separate thred by "start()"
-        global running
+        global running, gAudio
         while running:
             letter = self.inQ.get()
             if letter not in self.cw:
@@ -270,11 +272,15 @@ class Pulses(threading.Thread):
                 continue
             for d in self.cw[letter]:
                 if d == '.':
+                    if gAudio:
+                        gAudio.play(".")
                     self.on()
                     time.sleep( self.DIT )
                     self.off()
                     time.sleep( self.GAP )
                 elif d == '-':
+                    if gAudio:
+                        gAudio.play("-")
                     self.on()
                     time.sleep( self.DAH )
                     self.off()
@@ -318,36 +324,89 @@ if configuration['Terminal']:
             
 gAudio = None
 if configuration['Audio']:
-    class Audio(pysinewave.SineWave):
+    class Audio(threading.Thread):
         """
-        Computer audio beeps using pysinewave
+        Computer audio beeps using pyaudio
+        Code from pysine
+        https://github.com/lneuhaus/pysine/blob/master/pysine/pysine.py
         """
         def __init__( self ):
-            self._pitch_ = 0
-            self.volume = 0
-            super().__init__( pitch = self._pitch_, decibels = self.volume )
+            print("Audio 1")
+            self.stream = None
+            self.freq = 512.
+            self.Q = queue.Queue( maxsize=2 )
+            print(pyaudio.get_portaudio_version_text())
+            print("Audio 2")
+            self.pa = pyaudio.PyAudio()
+            print("Audio 3")
+            print(pyaudio.get_default_output_device_info() )
+            print("Audio 4")
+            try:
+                self.stream = self.pa.open(
+                    format=self.pa.get_format_from_width(1),
+                    channels=1,
+                    rate=96000,
+                    output=True)
+                print(self.stream)
+            except:
+                print("pyaudio open error")
+                raise
+            super().__init__()
 
-        def on( self ):
-            self.play()
+        def play( self, d ):
+            self.Q.put( d )
 
-        def off( self ):
-            self.stop()
+        def __del__(self):
+            print("Audio delete")
+            if self.stream:
+                self.stream.stop_stream()
+                self.stream.close()
+            self.pa.terminate()
+
+        def makewave( self, duration ):
+            points = int(96000 * duration)
+            times = np.linspace(0, duration, points, endpoint=False)
+            return np.array((np.sin(times*self.freq*2*np.pi) + 1.0)*127.5, dtype=np.int8).tobytes()
+            
+        def run( self ) :
+            # called in a separate thread by "start()"
+            global running
+            while running:
+                if self.Q.get() == ".":
+                    self.dit()
+                else:
+                    self.dah()
+                self.Q.task_done()
+
+        def settimes( self, DIT, DAH ):
+
+            self.DIT = DIT
+            self.ditwave = self.makewave( DIT )
+
+            self.DAH = DAH
+            self.dahwave = self.makewave( DAH )
+
+        def dit( self ):
+            self.stream.write( self.ditwave )
+
+        def dah( self ):
+            self.stream.write( self.dahwave )
 
         def louder( self ):
             self.volume += 3
-            self.set_volume( self.volume )
+            self.settimes( self.DIT, self.DAH )
 
         def softer( self ):
             self.volume -= 3
-            self.set_volume( self.volume )
+            self.settimes( self.DIT, self.DAH )
 
         def higher( self ):
-            self._pitch_ += 6
-            self.set_pitch( self._pitch_ )
+            self.freq *= np.sqrt(2)
+            self.settimes( self.DIT, self.DAH )
 
         def lower( self ):
-            self._pitch_ -= 6
-            self.set_pitch( self._pitch_ )
+            self.freq *= np.sqrt(.5)
+            self.settimes( self.DIT, self.DAH )
 
 gBuzzer = None
 if configuration['Buzzer']:
@@ -467,18 +526,19 @@ def signal_handler(signal, frame):
     sys.exit(0)
 
 def main(args):
-    global configuration, gHardware, gAudio, gGraphics, gTerminal, running
+    global configuration, gPiHardware, gAudio, gGraphics, gTerminal, running
     
     # keyboard interrupt
     signal.signal(signal.SIGINT, signal_handler)
 
     try:
-        gHardware = Hardware()
+        gPiHardware = PiHardware()
     except:
-        gHardware = None
+        gPiHardware = None
 
     try:
         gAudio = Audio()
+        gAudio.start()
     except:
         gAudio = None
 
