@@ -39,9 +39,9 @@ if configuration['Audio']:
         print('Numpy module could not be loaded.\n Perhaps it needs to be installed by "pip3 install numpy"\n')
         raise
     try:
-        import pyaudio
+        import simpleaudio as sa
     except:
-        print('pyaudio module could not be loaded.\n Perhaps it needs to be installed by "pip3 install pyaudio"\n')
+        print('simpleaudio module could not be loaded.\n Perhaps it needs to be installed by "pip3 install simpleaudio".\n It may also need libasound2-dev\n')
         raise
 
 if configuration['Graphics']:
@@ -86,6 +86,8 @@ try:
 except:
     print('random module could not be loaded.\n It should be part of the standard configuration\n')
     raise
+
+running = True
     
 gPiHardware = None
 if configuration['Buzzer'] or configuration['Knob'] or configuration['LEDscreen'] or configuration['LEDflash']:
@@ -331,43 +333,24 @@ if configuration['Audio']:
         https://github.com/lneuhaus/pysine/blob/master/pysine/pysine.py
         """
         def __init__( self ):
-            print("Audio 1")
-            self.stream = None
             self.freq = 512.
+            self.sample_rate = 44100
+            self.volume = 20000 # in range 4000 to 32700
             self.Q = queue.Queue( maxsize=2 )
-            print(pyaudio.get_portaudio_version_text())
-            print("Audio 2")
-            self.pa = pyaudio.PyAudio()
-            print("Audio 3")
-            print(pyaudio.get_default_output_device_info() )
-            print("Audio 4")
-            try:
-                self.stream = self.pa.open(
-                    format=self.pa.get_format_from_width(1),
-                    channels=1,
-                    rate=96000,
-                    output=True)
-                print(self.stream)
-            except:
-                print("pyaudio open error")
-                raise
             super().__init__()
 
         def play( self, d ):
             self.Q.put( d )
 
         def __del__(self):
-            print("Audio delete")
-            if self.stream:
-                self.stream.stop_stream()
-                self.stream.close()
-            self.pa.terminate()
+            sa.stop_all()
 
         def makewave( self, duration ):
-            points = int(96000 * duration)
-            times = np.linspace(0, duration, points, endpoint=False)
-            return np.array((np.sin(times*self.freq*2*np.pi) + 1.0)*127.5, dtype=np.int8).tobytes()
-            
+            print(duration)
+            print(duration*self.sample_rate)
+            times = np.linspace(0, duration, int(duration*self.sample_rate), endpoint=False)
+            return sa.WaveObject( np.array(np.sin(times*self.freq*2*np.pi)*self.volume, dtype=np.int16), 1, 2, self.sample_rate )
+
         def run( self ) :
             # called in a separate thread by "start()"
             global running
@@ -376,7 +359,6 @@ if configuration['Audio']:
                     self.dit()
                 else:
                     self.dah()
-                self.Q.task_done()
 
         def settimes( self, DIT, DAH ):
 
@@ -387,17 +369,17 @@ if configuration['Audio']:
             self.dahwave = self.makewave( DAH )
 
         def dit( self ):
-            self.stream.write( self.ditwave )
+            self.ditwave.play()
 
         def dah( self ):
-            self.stream.write( self.dahwave )
+            self.dahwave.play()
 
         def louder( self ):
-            self.volume += 3
+            self.volume = max( 32700, int( self.volume * 1.3 ) )
             self.settimes( self.DIT, self.DAH )
 
         def softer( self ):
-            self.volume -= 3
+            self.volume = min( 4000, int( self.volume * .7 ) )
             self.settimes( self.DIT, self.DAH )
 
         def higher( self ):
