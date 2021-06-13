@@ -159,6 +159,7 @@ class Source(threading.Thread):
         while running:
             self.outQ.put( self.source_function() )
 
+gPulses = None
 class Pulses(threading.Thread):
     """
     Change letters to dits/dahs/gaps as timed events and play
@@ -220,10 +221,12 @@ class Pulses(threading.Thread):
     def __init__( self, inQ, outQ, WPM=5  ):
         super().__init__()
         global gAudio, gBuzzer, gLEDflash, gGraphics
-        self.wpm = WPM
+        self.Fwpm = WPM
+        self.Cwpm = WPM
         self.inQ = inQ
         self.outQ = outQ
         self.clients = [ gBuzzer, gLEDflash, gGraphics ]
+        self.farnsworth( WPM, WPM )
 
         self.cw = type(self).cw
         
@@ -232,25 +235,23 @@ class Pulses(threading.Thread):
     def Volcabulary( cls ):
         return list(cls.cw.keys())
 
-    @property
-    def wpm( self ):
-        return self._wpm
-
-    @wpm.setter
-    def wpm( self, Wpm ):
+    def farnsworth( self, Fwpm=5, Cwpm=18 ):
+        # total words per minute Wpm
+        # Characters sent as Cwpm
+        # see https://morsecode.world/international/timing.html
+        print( Fwpm, Cwpm )
         global gAudio
-        self._wpm = Wpm
-        self.DIT  = self._dittime()
+        self.Fwpm = Fwpm
+        self.Cwpm = Cwpm
+        self.DIT  = 60. / (50. * Cwpm )
         self.DAH  = self.DIT * 3
         self.GAP  = self.DIT * 1
-        self.LGAP = self.DIT * 3 - self.GAP
-        self.WGAP = self.DIT * 7 - self.LGAP - self.GAP
+        fdit = ( 300. * Cwpm - 186. * Fwpm ) / ( 95. * Cwpm * Fwpm ) 
+        self.LGAP = fdit * 3 - self.GAP
+        self.WGAP = fdit * 7 - self.LGAP - self.GAP
         if gAudio:
             gAudio.settimes( self.DIT, self.DAH )
 
-    def _dittime( self ):
-        return 60. / (50 * self._wpm)
-        
     def on( self ):
         for c in self.clients:
             if c is not None:
@@ -326,7 +327,7 @@ if configuration['Terminal']:
             
 gAudio = None
 if configuration['Audio']:
-    class Audio(threading.Thread):
+    class Audio:
         """
         Computer audio beeps using pyaudio
         Code from pysine
@@ -336,8 +337,6 @@ if configuration['Audio']:
             self.freq = 512.
             self.sample_rate = 44100
             self.volume = 20000 # in range 4000 to 32700
-            self.Q = queue.Queue( maxsize=2 )
-            super().__init__()
 
         def play( self, d ):
             self.Q.put( d )
@@ -346,19 +345,14 @@ if configuration['Audio']:
             sa.stop_all()
 
         def makewave( self, duration ):
-            print(duration)
-            print(duration*self.sample_rate)
             times = np.linspace(0, duration, int(duration*self.sample_rate), endpoint=False)
             return sa.WaveObject( np.array(np.sin(times*self.freq*2*np.pi)*self.volume, dtype=np.int16), 1, 2, self.sample_rate )
 
-        def run( self ) :
-            # called in a separate thread by "start()"
-            global running
-            while running:
-                if self.Q.get() == ".":
-                    self.dit()
-                else:
-                    self.dah()
+        def play( self, d ):
+            if d == ".":
+                self.dit()
+            else:
+                self.dah()
 
         def settimes( self, DIT, DAH ):
 
@@ -457,19 +451,131 @@ if configuration['Graphics']:
         def __init__( self ):
             # set root window
             self.root = tk.Tk()
+            self.main = tk.Frame(self.root)
             # Set geometry
             self.root.geometry("400x400")
 
-            self.flash = tk.Frame( self.root, width=50, height=50 )
+            
+            self.flash = tk.Frame( self.main, width=100, height=50 )
             self.off()
             self.flash.pack()
 
-            self.text = tk.Text( self.root)
-            self.text.config( font=("Courier",20) )
+            self.text = tk.Text( self.main, height=1 )
+            self.text.config( font=("Courier",24) )
             self.text.pack()
+
+            self.Speed( self.main )
+
+            self.Menu( self.root )
+
+            self.main.pack()
 
         def Mainloop( self ):
             return self.root.mainloop()
+
+        def Menu( self, frame ):
+            menubar = tk.Menu( frame )
+
+            filemenu = tk.Menu( menubar, tearoff=0 )
+            filemenu.add_command(label="Exit", command=self.root.quit)
+            menubar.add_cascade(label="File", menu=filemenu)
+
+            soundmenu = tk.Menu( menubar, tearoff=0 )
+            soundmenu.add_command(label="Higher", command=self.higher)
+            soundmenu.add_command(label="Lower", command=self.lower)
+            soundmenu.add_separator()
+            soundmenu.add_command(label="Louder", command=self.louder)
+            soundmenu.add_command(label="Softer", command=self.softer)
+            menubar.add_cascade(label="Sound", menu=soundmenu)
+
+            frame.config( menu=menubar )
+
+        def Speed( self, frame ):
+            self.fspeed = tk.Frame(frame)
+            
+            tk.Label( self.fspeed, text="Timing" ).grid(row=0,column=0 )
+            #tk.Label( self.fspeed, text="Timing" ).pack()
+
+            self.farnsvar = tk.BooleanVar( value=True )
+            tk.Checkbutton( self.fspeed, text="Farnsworth", variable=self.farnsvar, command=self.set_fvar ).grid( row=0,column=1 )
+
+
+            # assert Cwpm >= Fwpm
+            tk.Label( self.fspeed, text="Character speed in words per minute" ).grid(columnspan=2 )
+            self.cwpmvar = tk.IntVar( value=13 )
+            self.cwpmscale = tk.Scale( self.fspeed, from_=5, to=60, resolution=1, orient=tk.HORIZONTAL, variable=self.cwpmvar, command=self.set_cwpm )
+            self.cwpmscale.grid( columnspan=2 ) 
+
+            tk.Label( self.fspeed, text="Total words per minute" ).grid(columnspan=2 )
+            self.fwpmvar = tk.IntVar( value=5  )
+            self.fwpmscale = tk.Scale( self.fspeed, from_=5, to=60, resolution=1, orient=tk.HORIZONTAL, variable=self.fwpmvar, command=self.set_fwpm )
+            self.fwpmscale.grid( columnspan=2 )
+            
+            self.fspeed.pack()
+
+        def set_fvar( self ):
+            global gPulses
+            # Farnsworth Checkbox
+            if self.farmsvar.get():
+                # Yes Farnsworth now
+                self.cwpmscale.grid()
+                gPulses.farnsworth( self.fwpmvar.get(), self.cwpmvar.get() )
+            else:
+                # No Farnsworth
+                self.cwpmscale.grid_remove()
+                gPulses.farnsworth( self.fwpmvar.get(), self.fwpmvar.get() )
+            
+        def set_cwpm( self, val ):
+            global gPulses
+            # Change char wpm
+            f = self.fwpmvar.get()
+            c = self.cwpmvar.get()
+            if c < f:
+                self.fwpmvar.set(c)
+            elif self.farnsvar.get():
+                gPulses.farnsworth( f, c )
+            else:
+                gPulses.farnsworth( f, f )
+                
+        def set_fwpm( self, val ):
+            global gPulses
+            # Change farnsworth wpm
+            f = self.fwpmvar.get()
+            c = self.cwpmvar.get()
+            if c < f:
+                self.cwpmvar.set(f)
+            elif self.farnsvar.get():
+                gPulses.farnsworth( f, c )
+            else:
+                gPulses.farnsworth( f, f )
+                
+        def louder( self ):
+            global gAudio, gBuzzer
+            if gAudio:
+                gAudio.louder()
+            if gBuzzer:
+                gBuzzer.louder()
+
+        def softer( self ):
+            global gAudio, gBuzzer
+            if gAudio:
+                gAudio.softer()
+            if gBuzzer:
+                gBuzzer.softer()
+
+        def higher( self ):
+            global gAudio, gBuzzer
+            if gAudio:
+                gAudio.higher()
+            if gBuzzer:
+                gBuzzer.higher()
+
+        def lower( self ):
+            global gAudio, gBuzzer
+            if gAudio:
+                gAudio.lower()
+            if gBuzzer:
+                gBuzzer.lower()
 
         def on( self ):
             self.root.after_idle( self._on)
@@ -483,24 +589,9 @@ if configuration['Graphics']:
         def _off( self ):
             self.flash['background']='grey'
 
-        def louder( self ):
-            self.volume += 3
-            self.set_volume( self.volume )
-
-        def softer( self ):
-            self.volume -= 3
-            self.set_volume( self.volume )
-
-        def higher( self ):
-            self._pitch_ += 6
-            self.set_pitch( self._pitch_ )
-
-        def lower( self ):
-            self._pitch_ -= 6
-            self.set_pitch( self._pitch_ )
-
         def write( self, letter ):
             self.text.insert( tk.END, letter )
+            self.text.see( tk.END )
 
 def signal_handler(signal, frame):
     global running
@@ -508,7 +599,7 @@ def signal_handler(signal, frame):
     sys.exit(0)
 
 def main(args):
-    global configuration, gPiHardware, gAudio, gGraphics, gTerminal, running
+    global configuration, gPiHardware, gAudio, gGraphics, gTerminal, running, gPulses
     
     # keyboard interrupt
     signal.signal(signal.SIGINT, signal_handler)
@@ -520,7 +611,6 @@ def main(args):
 
     try:
         gAudio = Audio()
-        gAudio.start()
     except:
         gAudio = None
 
@@ -540,12 +630,12 @@ def main(args):
     running = True
 
     LettersOut(resultQ).start()
-    Pulses(sourceQ,resultQ).start()
+    gPulses = Pulses(sourceQ,resultQ)
+    gPulses.start()
     Source(sourceQ).start()
 
     if gGraphics is not None:
         gGraphics.Mainloop()
-    running = False
     
 if __name__ == "__main__":
     # execute only if run as a script
