@@ -239,7 +239,6 @@ class Pulses(threading.Thread):
         # total words per minute Wpm
         # Characters sent as Cwpm
         # see https://morsecode.world/international/timing.html
-        print( Fwpm, Cwpm )
         global gAudio
         self.Fwpm = Fwpm
         self.Cwpm = Cwpm
@@ -334,19 +333,25 @@ if configuration['Audio']:
         https://github.com/lneuhaus/pysine/blob/master/pysine/pysine.py
         """
         def __init__( self ):
-            self.freq = 512.
+            self.freq = 1024.
             self.sample_rate = 44100
             self.volume = 20000 # in range 4000 to 32700
-
-        def play( self, d ):
-            self.Q.put( d )
+            
+            # Use rounding of 1ms as in https://brats-qth.org/training/advanced/trandrec8.htm
+            # Will use formula: y = (x/T)^2*(3-2*x/T) --- a smoothing function with rotational symmetry at x=0, x=T
+            self.shoulder_length = int( .001 * self.sample_rate )
+            self.smooth = np.linspace(0,1,self.shoulder_length)
+            self.smooth = self.smooth**2 * (3-2*self.smooth)
 
         def __del__(self):
             sa.stop_all()
 
         def makewave( self, duration ):
             times = np.linspace(0, duration, int(duration*self.sample_rate), endpoint=False)
-            return sa.WaveObject( np.array(np.sin(times*self.freq*2*np.pi)*self.volume, dtype=np.int16), 1, 2, self.sample_rate )
+            wave = np.sin(times*self.freq*2*np.pi)*self.volume # Raw sine wave
+            wave[0:self.shoulder_length] *= self.smooth # Start smooth
+            wave[-self.shoulder_length:] *= 1-self.smooth # End smooth
+            return sa.WaveObject( wave.astype('int16'), 1, 2, self.sample_rate )
 
         def play( self, d ):
             if d == ".":
@@ -501,28 +506,30 @@ if configuration['Graphics']:
 
 
             # assert Cwpm >= Fwpm
-            tk.Label( self.fspeed, text="Character speed in words per minute" ).grid(columnspan=2 )
-            self.cwpmvar = tk.IntVar( value=13 )
-            self.cwpmscale = tk.Scale( self.fspeed, from_=5, to=60, resolution=1, orient=tk.HORIZONTAL, variable=self.cwpmvar, command=self.set_cwpm )
-            self.cwpmscale.grid( columnspan=2 ) 
+            self.cwpmcontrol=tk.LabelFrame( self.fspeed, text="Character speed in words per minute", relief=tk.RIDGE )
+            self.cwpmvar = tk.IntVar( value=5 )
+            tk.Scale( self.cwpmcontrol, from_=5, to=60, resolution=1, orient=tk.HORIZONTAL, variable=self.cwpmvar, command=self.set_cwpm ).pack() 
+            self.cwpmcontrol.grid(columnspan=2, sticky="nesw" )
 
-            tk.Label( self.fspeed, text="Total words per minute" ).grid(columnspan=2 )
+            fwpmcontrol=tk.LabelFrame( self.fspeed, text="Total words per minute", relief=tk.RIDGE )
             self.fwpmvar = tk.IntVar( value=5  )
-            self.fwpmscale = tk.Scale( self.fspeed, from_=5, to=60, resolution=1, orient=tk.HORIZONTAL, variable=self.fwpmvar, command=self.set_fwpm )
-            self.fwpmscale.grid( columnspan=2 )
+            tk.Scale( fwpmcontrol, from_=5, to=60, resolution=1, orient=tk.HORIZONTAL, variable=self.fwpmvar, command=self.set_fwpm ).pack()
+            fwpmcontrol.grid(columnspan=2, sticky="nesw")
+            
+            self.cwpmvar.set(13) # To trigger a change and set proper timing
             
             self.fspeed.pack()
 
         def set_fvar( self ):
             global gPulses
             # Farnsworth Checkbox
-            if self.farmsvar.get():
+            if self.farnsvar.get():
                 # Yes Farnsworth now
-                self.cwpmscale.grid()
+                self.cwpmcontrol.grid()
                 gPulses.farnsworth( self.fwpmvar.get(), self.cwpmvar.get() )
             else:
                 # No Farnsworth
-                self.cwpmscale.grid_remove()
+                self.cwpmcontrol.grid_remove()
                 gPulses.farnsworth( self.fwpmvar.get(), self.fwpmvar.get() )
             
         def set_cwpm( self, val ):
