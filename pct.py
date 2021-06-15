@@ -262,7 +262,7 @@ class Pulses(threading.Thread):
                 c.off()
 
     def run( self ):
-        # called in a separate thred by "start()"
+        # called in a separate thread by "start()"
         global running, gAudio
         while running:
             letter = self.inQ.get()
@@ -507,7 +507,7 @@ if configuration['Graphics']:
 
             # assert Cwpm >= Fwpm
             self.cwpmcontrol=tk.LabelFrame( self.fspeed, text="Character speed in words per minute", relief=tk.RIDGE )
-            self.cwpmvar = tk.IntVar( value=5 )
+            self.cwpmvar = tk.IntVar( value=13 )
             tk.Scale( self.cwpmcontrol, from_=5, to=60, resolution=1, orient=tk.HORIZONTAL, variable=self.cwpmvar, command=self.set_cwpm ).pack() 
             self.cwpmcontrol.grid(columnspan=2, sticky="nesw" )
 
@@ -516,7 +516,7 @@ if configuration['Graphics']:
             tk.Scale( fwpmcontrol, from_=5, to=60, resolution=1, orient=tk.HORIZONTAL, variable=self.fwpmvar, command=self.set_fwpm ).pack()
             fwpmcontrol.grid(columnspan=2, sticky="nesw")
             
-            self.cwpmvar.set(13) # To trigger a change and set proper timing
+            self.farnsvar.set(True) # To trigger a change and set proper timing
             
             self.fspeed.pack()
 
@@ -539,6 +539,7 @@ if configuration['Graphics']:
             c = self.cwpmvar.get()
             if c < f:
                 self.fwpmvar.set(c)
+                gPulses.farnsworth( f, f )
             elif self.farnsvar.get():
                 gPulses.farnsworth( f, c )
             else:
@@ -551,6 +552,7 @@ if configuration['Graphics']:
             c = self.cwpmvar.get()
             if c < f:
                 self.cwpmvar.set(f)
+                gPulses.farnsworth( f, f )
             elif self.farnsvar.get():
                 gPulses.farnsworth( f, c )
             else:
