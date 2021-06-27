@@ -6,7 +6,7 @@
 # Use a Pi to generate random CW
 # audio output: buzzer
 # screen output on LCD screen
-# potentometer to adjust speed
+# potentiometer to adjust speed
 #
 # 2021 Paul H Alffille
 
@@ -17,7 +17,8 @@ configuration = {
     'Graphics'  : True  ,
     'Keyboard'  : True  ,
     'Audio'     : True  ,
-    'Buzzer'    : False ,
+    'ABuzzer'   : True  , # Active Buzzer
+    'PBuzzer'   : False , # Passive Buzzer
     'LEDflash'  : False ,
     'LEDscreen' : False ,
     'Knob'      : False ,
@@ -25,7 +26,7 @@ configuration = {
     }
 
 
-if configuration['Buzzer'] or configuration['LEDflash'] or configuration['LEDscreen'] or configuration['Knob']:
+if configuration['ABuzzer'] or configuration['PBuzzer'] or configuration['LEDflash'] or configuration['LEDscreen'] or configuration['Knob']:
     try:
         import pigpio
     except:
@@ -89,8 +90,7 @@ except:
 
 running = True
     
-gPiHardware = None
-if configuration['Buzzer'] or configuration['Knob'] or configuration['LEDscreen'] or configuration['LEDflash']:
+if configuration['ABuzzer'] or configuration['PBuzzer'] or configuration['Knob'] or configuration['LEDscreen'] or configuration['LEDflash']:
     class PiHardware:
         """
         PiHardware connection -- i.e. Raspberry Pi GPIO pins
@@ -119,33 +119,74 @@ if configuration['Buzzer'] or configuration['Knob'] or configuration['LEDscreen'
         
         # Choices
         LED = 5 # PIO 5, Pi header pin 29
-        PWM = 32
+        ABUZ = 6 # PIO 6, Pi header pin 31
+        PWM = 32 # for passive buzzer
         I2Cbus = 1
         
         def __init__( self ):
-            global configuration, gLEDflash, gBuzzer
             self.pi = pigpio.pi()
             if not self.pi.connected:
                 print("Could not connect to pigpiod, was it started?\n")
                 exit()
             
             try:
-                gLEDflash = LEDflash( self.pi, type(self).LED )
+                LEDflash( self.pi, type(self).LED )
             except:
-                gLEDflash = None
+                pass
 
             try:
-                gBuzzer = Buzzer( self.pi, type(self).PWM )
+                ABuzzer( self.pi, type(self).ABUZ )
             except:
-                gBuzzer = None
+                pass
                             
+            try:
+                PBuzzer( self.pi, type(self).PWM )
+            except:
+                pass
+                            
+class Device:
+    device_list = []
+
+    def __init__( self ):
+        type(self).device_list.append(self)
+
+    @classmethod
+    def list( cls ):
+        return cls.device_list
+    
+    def louder( self):
+        pass
+
+    def softer( self):
+        pass
+
+    def higher( self):
+        pass
+
+    def lower( self):
+        pass
+
+    def on( self):
+        pass
+
+    def off( self):
+        pass
+
+    def play( self, s ):
+        pass
+
+    def settimes( self, dit, dah ):
+        pass
+
+    def write( self, l ):
+        pass
+
 class Source(threading.Thread):
     """
     Change dits/dahs/gaps to timed events
     """
     def __init__( self, Q ):
         super().__init__()
-        global configuration
         self.outQ = Q
         self.source_function = self.random
         self.choices = Pulses.Volcabulary() + list(' '*10)
@@ -220,12 +261,10 @@ class Pulses(threading.Thread):
 
     def __init__( self, inQ, outQ, WPM=5  ):
         super().__init__()
-        global gAudio, gBuzzer, gLEDflash, gGraphics
         self.Fwpm = WPM
         self.Cwpm = WPM
         self.inQ = inQ
         self.outQ = outQ
-        self.clients = [ gBuzzer, gLEDflash, gGraphics ]
         self.farnsworth( WPM, WPM )
 
         self.cw = type(self).cw
@@ -239,7 +278,6 @@ class Pulses(threading.Thread):
         # total words per minute Wpm
         # Characters sent as Cwpm
         # see https://morsecode.world/international/timing.html
-        global gAudio
         self.Fwpm = Fwpm
         self.Cwpm = Cwpm
         self.DIT  = 60. / (50. * Cwpm )
@@ -248,22 +286,24 @@ class Pulses(threading.Thread):
         fdit = ( 300. * Cwpm - 186. * Fwpm ) / ( 95. * Cwpm * Fwpm ) 
         self.LGAP = fdit * 3 - self.GAP
         self.WGAP = fdit * 7 - self.LGAP - self.GAP
-        if gAudio:
-            gAudio.settimes( self.DIT, self.DAH )
+        for d in Device.list():
+            d.settimes( self.DIT, self.DAH )
 
     def on( self ):
-        for c in self.clients:
-            if c is not None:
-                c.on()
+        for d in Device.list():
+            d.on()
 
     def off( self ):
-        for c in self.clients:
-            if c is not None:
-                c.off()
+        for d in Device.list():
+            d.off()
+
+    def play( self, s ):
+        for d in Device.list():
+            d.play(s)
 
     def run( self ):
         # called in a separate thread by "start()"
-        global running, gAudio
+        global running
         while running:
             letter = self.inQ.get()
             if letter not in self.cw:
@@ -274,15 +314,13 @@ class Pulses(threading.Thread):
                 continue
             for d in self.cw[letter]:
                 if d == '.':
-                    if gAudio:
-                        gAudio.play(".")
+                    self.play(".")
                     self.on()
                     time.sleep( self.DIT )
                     self.off()
                     time.sleep( self.GAP )
                 elif d == '-':
-                    if gAudio:
-                        gAudio.play("-")
+                    self.play("-")
                     self.on()
                     time.sleep( self.DAH )
                     self.off()
@@ -298,35 +336,31 @@ class LettersOut(threading.Thread):
     """
     def __init__( self, Q ):
         super().__init__()
-        global configuration, gTerminal, gGraphics
         self.Q = Q
-        self.clients = [ gTerminal, gGraphics ]
 
     def run( self ):
         # called in a separate thred by "start()"
         global running
         while running:
             letter = self.Q.get()
-            for c in self.clients:
-                if c is not None:
-                    c.write(letter)
+            for d in Device.list():
+                d.write(letter)
             self.Q.task_done()
 
-gTerminal = None
 if configuration['Terminal']:
-    class Terminal:
+    class Terminal(Device):
         """
         Letters out to terminal
         """
         def __init__( self ):
             print()
+            super().__init__()
 
         def write( self, letter ):
             print( letter, end = '' )
             
-gAudio = None
 if configuration['Audio']:
-    class Audio:
+    class Audio(Device):
         """
         Computer audio beeps using pyaudio
         Code from pysine
@@ -342,6 +376,7 @@ if configuration['Audio']:
             self.shoulder_length = int( .001 * self.sample_rate )
             self.smooth = np.linspace(0,1,self.shoulder_length)
             self.smooth = self.smooth**2 * (3-2*self.smooth)
+            super().__init__()
 
         def __del__(self):
             sa.stop_all()
@@ -389,9 +424,8 @@ if configuration['Audio']:
             self.freq *= np.sqrt(.5)
             self.settimes( self.DIT, self.DAH )
 
-gBuzzer = None
-if configuration['Buzzer']:
-    class Buzzer:
+if configuration['PBuzzer']:
+    class PBuzzer(Device):
         """
         Piezo beep using PWM pin amplified with transistor
         """
@@ -401,6 +435,7 @@ if configuration['Buzzer']:
             self.volume = 0
             self.pin = pin
             self.handle = handle
+            super().__init__()
 
         def on( self ):
             self.handle.hardware_PWM( self.pin , self.freq , 500000 )
@@ -427,16 +462,16 @@ if configuration['Buzzer']:
         def calc( self ):
             self.freq = 256. * pow(2,self._pitch_/12.)
 
-gLEDflash = None
-if configuration['LEDflash']:
-    class LEDflash:
+if configuration['ABuzzer']:
+    class ABuzzer(Device):
         """
-        Flash singleLED connected to a gpio pin (with 10K resistor)
+        Buzzer connected to a gpio pin (with 10K resistor) controlling a PNP transistor
         """
         def __init__( self, handle, pin ):
             self.pin = pin
             self.handle = handle
             self.handle.set_mode( self.pin, pigpio.OUTPUT )
+            super().__init__()
 
         def on( self ):
             self.handle.write( self.pin , 1 )
@@ -444,9 +479,26 @@ if configuration['LEDflash']:
         def off( self ):
             self.handle.write( self.pin , 0 )
 
-gGraphics = None
+
+if configuration['LEDflash']:
+    class LEDflash(Device):
+        """
+        Flash singleLED connected to a gpio pin (with 10K resistor)
+        """
+        def __init__( self, handle, pin ):
+            self.pin = pin
+            self.handle = handle
+            self.handle.set_mode( self.pin, pigpio.OUTPUT )
+            super().__init__()
+
+        def on( self ):
+            self.handle.write( self.pin , 1 )
+
+        def off( self ):
+            self.handle.write( self.pin , 0 )
+
 if configuration['Graphics']:
-    class Graphics():
+    class Graphics(Device):
         """
         Computer audio beeps using pysinewave
         Single instance
@@ -459,7 +511,6 @@ if configuration['Graphics']:
             self.main = tk.Frame(self.root)
             # Set geometry
             self.root.geometry("400x400")
-
             
             self.flash = tk.Frame( self.main, width=100, height=50 )
             self.off()
@@ -474,6 +525,7 @@ if configuration['Graphics']:
             self.Menu( self.root )
 
             self.main.pack()
+            super().__init__()
 
         def Mainloop( self ):
             return self.root.mainloop()
@@ -486,11 +538,11 @@ if configuration['Graphics']:
             menubar.add_cascade(label="File", menu=filemenu)
 
             soundmenu = tk.Menu( menubar, tearoff=0 )
-            soundmenu.add_command(label="Higher", command=self.higher)
-            soundmenu.add_command(label="Lower", command=self.lower)
+            soundmenu.add_command(label="Higher", command=self.make_higher)
+            soundmenu.add_command(label="Lower", command=self.make_lower)
             soundmenu.add_separator()
-            soundmenu.add_command(label="Louder", command=self.louder)
-            soundmenu.add_command(label="Softer", command=self.softer)
+            soundmenu.add_command(label="Louder", command=self.make_louder)
+            soundmenu.add_command(label="Softer", command=self.make_softer)
             menubar.add_cascade(label="Sound", menu=soundmenu)
 
             frame.config( menu=menubar )
@@ -558,33 +610,21 @@ if configuration['Graphics']:
             else:
                 gPulses.farnsworth( f, f )
                 
-        def louder( self ):
-            global gAudio, gBuzzer
-            if gAudio:
-                gAudio.louder()
-            if gBuzzer:
-                gBuzzer.louder()
+        def make_louder( self ):
+            for d in Devices.list():
+                d.louder()
 
-        def softer( self ):
-            global gAudio, gBuzzer
-            if gAudio:
-                gAudio.softer()
-            if gBuzzer:
-                gBuzzer.softer()
+        def make_softer( self ):
+            for d in Devices.list():
+                d.softer()
 
-        def higher( self ):
-            global gAudio, gBuzzer
-            if gAudio:
-                gAudio.higher()
-            if gBuzzer:
-                gBuzzer.higher()
+        def make_higher( self ):
+            for d in Devices.list():
+                d.higher()
 
-        def lower( self ):
-            global gAudio, gBuzzer
-            if gAudio:
-                gAudio.lower()
-            if gBuzzer:
-                gBuzzer.lower()
+        def make_lower( self ):
+            for d in Devices.list():
+                d.lower()
 
         def on( self ):
             self.root.after_idle( self._on)
@@ -608,30 +648,30 @@ def signal_handler(signal, frame):
     sys.exit(0)
 
 def main(args):
-    global configuration, gPiHardware, gAudio, gGraphics, gTerminal, running, gPulses
+    global configuration, running, gPulses
     
     # keyboard interrupt
     signal.signal(signal.SIGINT, signal_handler)
 
     try:
-        gPiHardware = PiHardware()
+        PiHardware()
     except:
-        gPiHardware = None
+        pass
 
     try:
-        gAudio = Audio()
+        Audio()
     except:
-        gAudio = None
+        pass
 
     try:
-        gGraphics = Graphics()
+        g = Graphics()
     except:
-        gGraphics = None
+        g = None
 
     try:
-        gTerminal = Terminal()
+        Terminal()
     except:
-        gTerminal = None
+        pass
 
     sourceQ = queue.Queue( maxsize=50 )
     resultQ = queue.Queue( maxsize=0 )
@@ -643,8 +683,8 @@ def main(args):
     gPulses.start()
     Source(sourceQ).start()
 
-    if gGraphics is not None:
-        gGraphics.Mainloop()
+    if g is not None:
+        g.Mainloop()
     
 if __name__ == "__main__":
     # execute only if run as a script
